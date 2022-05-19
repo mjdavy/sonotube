@@ -1,0 +1,1 @@
+Track { title: "Interstellar", artist: "Deep Forest & Gaudi", album: Some("Epic Circuits"), queue_position: 1, uri: "x-sonos-http:librarytrack%3ai.qYglBfAaQNa0.mp4?sid=204&flags=8232&sn=3", duration: 290s, running_time: 40s }
