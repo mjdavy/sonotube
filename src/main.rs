@@ -1,6 +1,7 @@
 
 
 use sonos;
+use sonos::Speaker;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -19,12 +20,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let track = media_arc.track().await?;
     println!("{:?}",track);
 
-    let result = media_arc.play().await;
+    play(media_arc).await;
+    Ok(())
+}
+
+async fn play(speaker: &Speaker) {
+    let result = speaker.play().await;
     if let Ok(()) = result {
         println!("Track is playing")
     } else {
         eprintln!("Something went wrong")
     }
-    Ok(())
+    ()
 }
 
