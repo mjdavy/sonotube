@@ -18,22 +18,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn play(speaker: &Speaker) {
-    let result = speaker.play().await;
-    if let Ok(()) = result {
-        eprintln!("Track is playing")
-    } else {
-        eprintln!("Something went wrong")
-    }
-    ()
-}
-
-async fn find_media_arc(devices: &Vec<Speaker>) -> &Speaker{
-     devices.iter()
-        .find(|d| d.model == "Sonos Arc")
-        .expect("Unable to find any sonos Arc on your network")
-}
-
 async fn monitor_tracks(devices: &Vec<Speaker>)
 {
     let mut tracks = HashSet::new();
@@ -48,7 +32,6 @@ async fn monitor_tracks(devices: &Vec<Speaker>)
                 eprintln!("No current track on {} - {}", device.name, device.ip)
             }
         }
-        tracks.insert(String::from("foo"));
         task::sleep(Duration::from_secs(30)).await
     }
 }
