@@ -1,7 +1,6 @@
 
 
 use std::collections::HashSet;
-use regex::Error;
 use sonos::{self, Track};
 use sonos::Speaker;
 use async_std::{task};
@@ -9,6 +8,8 @@ use std::time::Duration;
 use async_std::prelude::*;
 use async_std::fs::OpenOptions;
 use duration_string::DurationString;
+
+mod tube;
 
 static TRACK_FILE_PATH: &str = "tracks.log";
 const TRACK_REGEX: &str = "Track \\{ title: \"(.+?)\", artist: \"(.+?)\", album: (Some(.+?)|None), queue_position: (.+?), uri: \"(.+?)\", duration: (.+?), running_time: (.+?) \\}";
@@ -25,7 +26,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn load_tracks(path: &str, tracks: &mut HashSet<String>) 
+async fn load_tracks(path: &str, tracks: &mut Vec<Track>) 
 {
     use async_std::io::BufReader;
     use async_std::fs::File;
@@ -53,34 +54,35 @@ async fn load_tracks(path: &str, tracks: &mut HashSet<String>)
     // parse contents and build Hashset
     for line in buffer.lines()
     {
-        if let Some(track_uri) = parse_track_uri(line) {
-            eprintln!("Adding uri: {}", &track_uri);
-            tracks.insert(track_uri);
+        if let Some(track) = parse_track(line) {
+            eprintln!("Adding track: {:?}", &track);
+            tracks.push(track);
         }
     }
 }
 
-fn parse_track_uri(line: &str) -> Option<String>
+#[test]
+fn test_load_tracks()
 {
-    use regex::Regex;
-    let re = Regex::new("uri: \"(.+?)\"").unwrap();
-    let cap = re.captures(line).unwrap();
-    match cap.get(1) 
-    {
-        Some(t) => Some(t.as_str().to_string()),
-        None => None,
-    }    
+    let path = "tracks_load_test.log";
+    let mut tracks = Vec::new();
+    task::block_on(load_tracks(path, &mut tracks)); 
+    assert_eq!(40,tracks.len());
 }
 
-fn parse_track(line: &str) -> Result<Track,Error>
+fn parse_track(line: &str) -> Option<Track>
 {
     use regex::Regex;
     let re = Regex::new(TRACK_REGEX).unwrap();
     let cap = re.captures(line).unwrap();
     assert_eq!(cap.len(),9);
 
+    eprintln!("parsing track string {}", line);
+
+
     let album = |n: String| { if n == "None" {None} else { Some(cap[4].to_string()) } };
 
+    
     let track: Track = Track {
         title: cap[1].to_string(), 
         artist: cap[2].to_string(), 
@@ -91,7 +93,14 @@ fn parse_track(line: &str) -> Result<Track,Error>
         running_time: DurationString::from_string(cap[8].to_string()).unwrap().into() 
     };
 
-    Ok(track)
+    Some(track)
+}
+
+#[test]
+fn test_duration_string()
+{
+    let nanos_20:Duration = DurationString::from_string("20ns".to_string()).unwrap().into();
+    assert_eq!(nanos_20.subsec_nanos(),20);
 }
 
 #[test]
@@ -144,21 +153,45 @@ fn test_parse_track_none() {
 
 async fn monitor_tracks(devices: &Vec<Speaker>, path:&str)
 {
+    use std::sync::mpsc;
+    use std::thread;
+
     // load previously seen track uris, so we don't get duplicates
-    let mut tracks = HashSet::new();
+    let mut tracks = Vec::new();
     load_tracks(path, &mut tracks).await; 
+
+    // Build the communication channel
+    let (sender, receiver) = mpsc::channel::<Track>();
+    thread::spawn(move || {
+        for track in receiver {
+            eprintln!("tube thread got track: {:?}", track);
+        }
+    });
+
+    // extract uris of previously seen tracks - send them to tube
+    let mut seen_tracks = HashSet::new();
+    for track in tracks {
+        seen_tracks.insert(track.uri.clone());
+        sender.send(track);
+    }
 
     loop {
         for device in devices {
             if let Ok(track) = device.track().await {
-                let res = process_track(&track, path, &mut tracks).await;
+                let res = process_track(&track, path, &mut seen_tracks).await;
                 if let Err(err) = res {
-                    eprint!("{:?}", err)
+                    eprintln!("{:?}", err);
                 } 
+                
+                if sender.send(track).is_err() {
+                    eprintln!("Send failed");
+                }
+                
             } 
         }
         task::sleep(Duration::from_secs(30)).await
     }
+    
 }
 
 async fn process_track(track: &Track, path: &str, tracks: &mut HashSet<String>) -> Result<(),std::io::Error>
@@ -200,5 +233,5 @@ fn test_process_track() {
     let result = task::block_on(process_track(&track, test_track_path, &mut tracks));
     assert!(tracks.contains(&track.uri));
     assert_eq!((), result.unwrap());
-
 }
+
