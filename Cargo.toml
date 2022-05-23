@@ -10,3 +10,4 @@ sonos = { path = "../sonos.rs" }
 async-std = "1"
 tokio = { version = "1.18.2", features = ["full"] }
 regex = "1"
+duration-string = "0.0.6"

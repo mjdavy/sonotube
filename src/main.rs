@@ -8,6 +8,7 @@ use async_std::{task};
 use std::time::Duration;
 use async_std::prelude::*;
 use async_std::fs::OpenOptions;
+use duration_string::DurationString;
 
 const TRACK_FILE_PATH: &str = "tracks.log";
 const TRACK_REGEX: &str = "Track \\{ title: \"(.+?)\", artist: \"(.+?)\", album: (.+?), queue_position: (.+?), uri: \"(.+?)\", duration: (.+?), running_time: (.+?) \\}";
@@ -84,8 +85,8 @@ fn parse_track(line: &str) -> Result<Track,Error>
         album: Some(cap[3].to_string()), 
         queue_position: u64::from_str_radix(&cap[4], 10).unwrap(), 
         uri: cap[5].to_string(),
-        duration: Duration::from_secs(290), // TODO
-        running_time: Duration::from_secs(40) // TODO
+        duration: DurationString::from_string(cap[6].to_string()).unwrap().into(), 
+        running_time: DurationString::from_string(cap[7].to_string()).unwrap().into() 
     };
 
     Ok(track)

@@ -266,6 +266,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "duration-string"
+version = "0.0.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b65bd8fceb01387287b3502b845588b9bf60e50e0d27392f724e6669385d6ac7"
+
+[[package]]
 name = "encoding_rs"
 version = "0.8.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1089,6 +1095,7 @@ name = "sonotube"
 version = "0.1.0"
 dependencies = [
  "async-std",
+ "duration-string",
  "regex",
  "sonos",
  "tokio",
