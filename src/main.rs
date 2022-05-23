@@ -10,8 +10,8 @@ use async_std::prelude::*;
 use async_std::fs::OpenOptions;
 use duration_string::DurationString;
 
-const TRACK_FILE_PATH: &str = "tracks.log";
-const TRACK_REGEX: &str = "Track \\{ title: \"(.+?)\", artist: \"(.+?)\", album: (.+?), queue_position: (.+?), uri: \"(.+?)\", duration: (.+?), running_time: (.+?) \\}";
+static TRACK_FILE_PATH: &str = "tracks.log";
+const TRACK_REGEX: &str = "Track \\{ title: \"(.+?)\", artist: \"(.+?)\", album: (Some(.+?)|None), queue_position: (.+?), uri: \"(.+?)\", duration: (.+?), running_time: (.+?) \\}";
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -21,7 +21,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let devices = sonos::discover().await?;
     println!("Found {} devices", devices.len());
     
-    monitor_tracks(&devices).await;
+    monitor_tracks(&devices,TRACK_FILE_PATH).await;
     Ok(())
 }
 
@@ -77,28 +77,30 @@ fn parse_track(line: &str) -> Result<Track,Error>
     use regex::Regex;
     let re = Regex::new(TRACK_REGEX).unwrap();
     let cap = re.captures(line).unwrap();
-    assert_eq!(cap.len(),8);
+    assert_eq!(cap.len(),9);
+
+    let album = |n: String| { if n == "None" {None} else { Some(cap[4].to_string()) } };
 
     let track: Track = Track {
         title: cap[1].to_string(), 
         artist: cap[2].to_string(), 
-        album: Some(cap[3].to_string()), 
-        queue_position: u64::from_str_radix(&cap[4], 10).unwrap(), 
-        uri: cap[5].to_string(),
-        duration: DurationString::from_string(cap[6].to_string()).unwrap().into(), 
-        running_time: DurationString::from_string(cap[7].to_string()).unwrap().into() 
+        album: album(cap[3].to_string()), 
+        queue_position: u64::from_str_radix(&cap[5], 10).unwrap(), 
+        uri: cap[6].to_string(),
+        duration: DurationString::from_string(cap[7].to_string()).unwrap().into(), 
+        running_time: DurationString::from_string(cap[8].to_string()).unwrap().into() 
     };
 
     Ok(track)
 }
 
 #[test]
-fn test_parse_track() {
+fn test_parse_track_some() {
     let line = "Track { title: \"Interstellar\", artist: \"Deep Forest & Gaudi\", album: Some(\"Epic Circuits\"), queue_position: 1, uri: \"x-sonos-http:librarytrack%3ai.qYglBfAaQNa0.mp4?sid=204&flags=8232&sn=3\", duration: 290s, running_time: 40s }";
     let track: Track = Track {
         title: "Interstellar".to_string(), 
         artist: "Deep Forest & Gaudi".to_string(), 
-        album: Some("Some(\"Epic Circuits\")".to_string()), 
+        album: Some("(\"Epic Circuits\")".to_string()), 
         queue_position: 1, 
         uri: "x-sonos-http:librarytrack%3ai.qYglBfAaQNa0.mp4?sid=204&flags=8232&sn=3".to_string(),
         duration: Duration::from_secs(290),
@@ -116,16 +118,40 @@ fn test_parse_track() {
     assert_eq!(parsed_track.running_time,track.running_time);
 }
 
-async fn monitor_tracks(devices: &Vec<Speaker>)
+#[test]
+fn test_parse_track_none() {
+    let line = "Track { title: \"title\", artist: \"artist\", album: None, queue_position: 2, uri: \"uri\", duration: 300s, running_time: 50s }";
+    let track: Track = Track {
+        title: "title".to_string(), 
+        artist: "artist".to_string(), 
+        album: None, 
+        queue_position: 2, 
+        uri: "uri".to_string(),
+        duration: Duration::from_secs(300),
+        running_time: Duration::from_secs(50)
+    };
+    
+    let parsed_track = parse_track(line).unwrap();
+    assert_eq!(parsed_track.uri,track.uri);
+    assert_eq!(parsed_track.title,track.title);
+    assert_eq!(parsed_track.artist,track.artist);
+    assert_eq!(parsed_track.album,track.album);
+    assert_eq!(parsed_track.queue_position,track.queue_position);
+    assert_eq!(parsed_track.uri,track.uri);
+    assert_eq!(parsed_track.duration,track.duration);
+    assert_eq!(parsed_track.running_time,track.running_time);
+}
+
+async fn monitor_tracks(devices: &Vec<Speaker>, path:&str)
 {
     // load previously seen track uris, so we don't get duplicates
     let mut tracks = HashSet::new();
-    load_tracks(TRACK_FILE_PATH, &mut tracks).await; 
+    load_tracks(path, &mut tracks).await; 
 
     loop {
         for device in devices {
             if let Ok(track) = device.track().await {
-                let res = process_track(&track, &mut tracks).await;
+                let res = process_track(&track, path, &mut tracks).await;
                 if let Err(err) = res {
                     eprint!("{:?}", err)
                 } 
@@ -135,7 +161,7 @@ async fn monitor_tracks(devices: &Vec<Speaker>)
     }
 }
 
-async fn process_track(track: &Track, tracks: &mut HashSet<String>) -> Result<(),std::io::Error>
+async fn process_track(track: &Track, path: &str, tracks: &mut HashSet<String>) -> Result<(),std::io::Error>
 {
     if tracks.contains(&track.uri) {
         return Ok(());
@@ -145,11 +171,10 @@ async fn process_track(track: &Track, tracks: &mut HashSet<String>) -> Result<()
     println!("New Track: {:?}", track);
 
     // log the track
-    let logfile = String::from("tracks.log");
     let mut buffer = OpenOptions::new()
             .append(true)
             .create(true)
-            .open(logfile)
+            .open(path)
             .await?;
 
     buffer.write_fmt(format_args!("{:?}\n", track)).await?;
@@ -157,3 +182,23 @@ async fn process_track(track: &Track, tracks: &mut HashSet<String>) -> Result<()
     Ok(())
 }
 
+#[test]
+fn test_process_track() {
+    let test_track_path = "tracks_test.log";
+
+    let track: Track = Track {
+        title: "title".to_string(), 
+        artist: "artist".to_string(), 
+        album: Some("album".to_string()), 
+        queue_position: 1, 
+        uri: "uri".to_string(),
+        duration: Duration::from_secs(180), 
+        running_time: Duration::from_secs(10) 
+    };
+
+    let mut tracks = HashSet::new();
+    let result = task::block_on(process_track(&track, test_track_path, &mut tracks));
+    assert!(tracks.contains(&track.uri));
+    assert_eq!((), result.unwrap());
+
+}
