@@ -8,22 +8,51 @@ use std::time::Duration;
 use async_std::prelude::*;
 use async_std::fs::OpenOptions;
 use duration_string::DurationString;
+use std::sync::mpsc;
+use std::thread;
+use std::env::{self, VarError};
 
 mod tube;
 
 static TRACK_FILE_PATH: &str = "tracks.log";
 const TRACK_REGEX: &str = "Track \\{ title: \"(.+?)\", artist: \"(.+?)\", album: (Some(.+?)|None), queue_position: (.+?), uri: \"(.+?)\", duration: (.+?), running_time: (.+?) \\}";
 
+
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main()  {
+    
+    let client_id: String = match env::var("CLIENT_ID") {
+        Ok(id) => id,
+        Err(e) => {
+             eprintln!("CLIENT_ID {e}"); 
+             return;
+        },
+    };
+
+    let client_secret: String = match env::var("CLIENT_SECRET") {
+        Ok(secret) => secret,
+        Err(e) => {
+            eprintln!("CLIENT_SECRET {e}");
+            return;
+        }
+    };
+
     // find sonos devices on the network and print them out
     println!("Looking for sonos devices...");
 
-    let devices = sonos::discover().await?;
+    let devices = match sonos::discover().await {
+        Ok(speakers) => speakers, 
+        Err(err) => { 
+            eprintln!("{}", err); 
+            return; 
+        },
+    };
+
     println!("Found {} devices", devices.len());
-    
-    monitor_tracks(&devices,TRACK_FILE_PATH).await;
-    Ok(())
+
+    let sender = start_tube_monitor(client_id, client_secret);
+    monitor_tracks(&devices,TRACK_FILE_PATH, &sender).await;
+
 }
 
 async fn load_tracks(path: &str, tracks: &mut Vec<Track>) 
@@ -39,7 +68,7 @@ async fn load_tracks(path: &str, tracks: &mut Vec<Track>)
         Ok(it) => it,
         Err(err) => {
             eprintln!("Unable to open track file: {:?}", err);
-            return
+            return;
         }
     };
 
@@ -55,7 +84,6 @@ async fn load_tracks(path: &str, tracks: &mut Vec<Track>)
     for line in buffer.lines()
     {
         if let Some(track) = parse_track(line) {
-            eprintln!("Adding track: {:?}", &track);
             tracks.push(track);
         }
     }
@@ -77,11 +105,7 @@ fn parse_track(line: &str) -> Option<Track>
     let cap = re.captures(line).unwrap();
     assert_eq!(cap.len(),9);
 
-    eprintln!("parsing track string {}", line);
-
-
     let album = |n: String| { if n == "None" {None} else { Some(cap[4].to_string()) } };
-
     
     let track: Track = Track {
         title: cap[1].to_string(), 
@@ -151,28 +175,35 @@ fn test_parse_track_none() {
     assert_eq!(parsed_track.running_time,track.running_time);
 }
 
-async fn monitor_tracks(devices: &Vec<Speaker>, path:&str)
+fn start_tube_monitor(client_id: String, client_secret: String) -> mpsc::Sender<Track>
 {
-    use std::sync::mpsc;
-    use std::thread;
+    // Build the communication channel
+   
+    let (sender, receiver) = mpsc::channel::<Track>();
+    thread::spawn(|| {
+        for track in receiver {
+            let mut tube = tube::Tube::new();
+            tube.process_track(&track);
+        }
+    });
+    return sender;
+}
 
+async fn monitor_tracks(devices: &Vec<Speaker>, path:&str, sender:&mpsc::Sender<Track>)
+{
+   
     // load previously seen track uris, so we don't get duplicates
     let mut tracks = Vec::new();
     load_tracks(path, &mut tracks).await; 
-
-    // Build the communication channel
-    let (sender, receiver) = mpsc::channel::<Track>();
-    thread::spawn(move || {
-        for track in receiver {
-            eprintln!("tube thread got track: {:?}", track);
-        }
-    });
 
     // extract uris of previously seen tracks - send them to tube
     let mut seen_tracks = HashSet::new();
     for track in tracks {
         seen_tracks.insert(track.uri.clone());
-        sender.send(track);
+        let track_string: String = format!("{:?}", track);
+        if sender.send(track).is_err() {
+           eprintln!("Send failed for track {}", track_string);
+        }
     }
 
     loop {
@@ -201,7 +232,6 @@ async fn process_track(track: &Track, path: &str, tracks: &mut HashSet<String>) 
     }
 
     tracks.insert(track.uri.clone());
-    println!("New Track: {:?}", track);
 
     // log the track
     let mut buffer = OpenOptions::new()
