@@ -1,5 +1,3 @@
-
-
 use std::collections::HashSet;
 use sonos::{self, Track};
 use sonos::Speaker;
@@ -10,13 +8,12 @@ use async_std::fs::OpenOptions;
 use duration_string::DurationString;
 use std::sync::mpsc;
 use std::thread;
-use std::env::{self, VarError};
+use std::env;
 
 mod tube;
 
 static TRACK_FILE_PATH: &str = "tracks.log";
 const TRACK_REGEX: &str = "Track \\{ title: \"(.+?)\", artist: \"(.+?)\", album: (Some(.+?)|None), queue_position: (.+?), uri: \"(.+?)\", duration: (.+?), running_time: (.+?) \\}";
-
 
 #[tokio::main]
 async fn main()  {
@@ -51,8 +48,58 @@ async fn main()  {
     println!("Found {} devices", devices.len());
 
     let sender = start_tube_monitor(client_id, client_secret);
-    monitor_tracks(&devices,TRACK_FILE_PATH, &sender).await;
+    start_track_monitor(&devices,TRACK_FILE_PATH, &sender).await;
 
+}
+
+fn start_tube_monitor(client_id: String, client_secret: String) -> mpsc::Sender<Track>
+{
+    // Build the communication channel
+   
+    let (sender, receiver) = mpsc::channel::<Track>();
+    thread::spawn(|| {
+        for track in receiver {
+            let mut tube = tube::Tube::new();
+            tube.process_track(&track);
+        }
+    });
+    return sender;
+}
+
+async fn start_track_monitor(devices: &Vec<Speaker>, path:&str, sender:&mpsc::Sender<Track>)
+{
+   
+    // load previously seen track uris, so we don't get duplicates
+    let mut tracks = Vec::new();
+    load_tracks(path, &mut tracks).await; 
+
+    // extract uris of previously seen tracks - send them to tube
+    let mut seen_tracks = HashSet::new();
+    for track in tracks {
+        seen_tracks.insert(track.uri.clone());
+        let track_string: String = format!("{:?}", track);
+        if sender.send(track).is_err() {
+           eprintln!("Send failed for track {}", track_string);
+        }
+    }
+
+    loop {
+        for device in devices {
+            if let Ok(track) = device.track().await {
+                let res = process_track(&track, path, &mut seen_tracks).await;
+                if let Err(err) = res {
+                    eprintln!("{:?}", err);
+                } 
+                
+                if sender.send(track).is_err() {
+                    eprintln!("Send failed");
+                }
+                
+            } 
+        }
+        task::sleep(Duration::from_secs(30)).await
+    }
+    
 }
 
 async fn load_tracks(path: &str, tracks: &mut Vec<Track>) 
@@ -89,15 +136,6 @@ async fn load_tracks(path: &str, tracks: &mut Vec<Track>)
     }
 }
 
-#[test]
-fn test_load_tracks()
-{
-    let path = "tracks_load_test.log";
-    let mut tracks = Vec::new();
-    task::block_on(load_tracks(path, &mut tracks)); 
-    assert_eq!(40,tracks.len());
-}
-
 fn parse_track(line: &str) -> Option<Track>
 {
     use regex::Regex;
@@ -118,6 +156,35 @@ fn parse_track(line: &str) -> Option<Track>
     };
 
     Some(track)
+}
+
+async fn process_track(track: &Track, path: &str, tracks: &mut HashSet<String>) -> Result<(),std::io::Error>
+{
+    if tracks.contains(&track.uri) {
+        return Ok(());
+    }
+
+    tracks.insert(track.uri.clone());
+
+    // log the track
+    let mut buffer = OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(path)
+            .await?;
+
+    buffer.write_fmt(format_args!("{:?}\n", track)).await?;
+
+    Ok(())
+}
+
+#[test]
+fn test_load_tracks()
+{
+    let path = "tracks_load_test.log";
+    let mut tracks = Vec::new();
+    task::block_on(load_tracks(path, &mut tracks)); 
+    assert_eq!(40,tracks.len());
 }
 
 #[test]
@@ -173,76 +240,6 @@ fn test_parse_track_none() {
     assert_eq!(parsed_track.uri,track.uri);
     assert_eq!(parsed_track.duration,track.duration);
     assert_eq!(parsed_track.running_time,track.running_time);
-}
-
-fn start_tube_monitor(client_id: String, client_secret: String) -> mpsc::Sender<Track>
-{
-    // Build the communication channel
-   
-    let (sender, receiver) = mpsc::channel::<Track>();
-    thread::spawn(|| {
-        for track in receiver {
-            let mut tube = tube::Tube::new();
-            tube.process_track(&track);
-        }
-    });
-    return sender;
-}
-
-async fn monitor_tracks(devices: &Vec<Speaker>, path:&str, sender:&mpsc::Sender<Track>)
-{
-   
-    // load previously seen track uris, so we don't get duplicates
-    let mut tracks = Vec::new();
-    load_tracks(path, &mut tracks).await; 
-
-    // extract uris of previously seen tracks - send them to tube
-    let mut seen_tracks = HashSet::new();
-    for track in tracks {
-        seen_tracks.insert(track.uri.clone());
-        let track_string: String = format!("{:?}", track);
-        if sender.send(track).is_err() {
-           eprintln!("Send failed for track {}", track_string);
-        }
-    }
-
-    loop {
-        for device in devices {
-            if let Ok(track) = device.track().await {
-                let res = process_track(&track, path, &mut seen_tracks).await;
-                if let Err(err) = res {
-                    eprintln!("{:?}", err);
-                } 
-                
-                if sender.send(track).is_err() {
-                    eprintln!("Send failed");
-                }
-                
-            } 
-        }
-        task::sleep(Duration::from_secs(30)).await
-    }
-    
-}
-
-async fn process_track(track: &Track, path: &str, tracks: &mut HashSet<String>) -> Result<(),std::io::Error>
-{
-    if tracks.contains(&track.uri) {
-        return Ok(());
-    }
-
-    tracks.insert(track.uri.clone());
-
-    // log the track
-    let mut buffer = OpenOptions::new()
-            .append(true)
-            .create(true)
-            .open(path)
-            .await?;
-
-    buffer.write_fmt(format_args!("{:?}\n", track)).await?;
-
-    Ok(())
 }
 
 #[test]
