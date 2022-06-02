@@ -7,8 +7,6 @@ use async_std::prelude::*;
 use async_std::fs::OpenOptions;
 use duration_string::DurationString;
 use std::sync::mpsc;
-use std::thread;
-use std::env;
 
 mod tube;
 
@@ -18,22 +16,6 @@ const TRACK_REGEX: &str = "Track \\{ title: \"(.+?)\", artist: \"(.+?)\", album:
 #[tokio::main]
 async fn main()  {
     
-    let client_id: String = match env::var("CLIENT_ID") {
-        Ok(id) => id,
-        Err(e) => {
-             eprintln!("CLIENT_ID {e}"); 
-             return;
-        },
-    };
-
-    let client_secret: String = match env::var("CLIENT_SECRET") {
-        Ok(secret) => secret,
-        Err(e) => {
-            eprintln!("CLIENT_SECRET {e}");
-            return;
-        }
-    };
-
     // find sonos devices on the network and print them out
     println!("Looking for sonos devices...");
 
@@ -47,20 +29,24 @@ async fn main()  {
 
     println!("Found {} devices", devices.len());
 
-    let sender = start_tube_monitor(client_id, client_secret);
+    let sender = start_tube_monitor().await;
     start_track_monitor(&devices,TRACK_FILE_PATH, &sender).await;
 
 }
 
-fn start_tube_monitor(client_id: String, client_secret: String) -> mpsc::Sender<Track>
+async fn start_tube_monitor() -> mpsc::Sender<Track>
 {
+    
     // Build the communication channel
    
     let (sender, receiver) = mpsc::channel::<Track>();
-    thread::spawn(|| {
+    
+    tokio::spawn(async move {
+        eprintln!("Authenticating...");
+        let mut tube = tube::Tube::new();
+        tube.authenticate().await;
         for track in receiver {
-            let mut tube = tube::Tube::new();
-            tube.process_track(&track);
+            tube.process_track(&track).await;
         }
     });
     return sender;
@@ -77,9 +63,10 @@ async fn start_track_monitor(devices: &Vec<Speaker>, path:&str, sender:&mpsc::Se
     let mut seen_tracks = HashSet::new();
     for track in tracks {
         seen_tracks.insert(track.uri.clone());
-        let track_string: String = format!("{:?}", track);
-        if sender.send(track).is_err() {
-           eprintln!("Send failed for track {}", track_string);
+        let track_string: String = format!("{} - {}", track.title,track.artist);
+        match sender.send(track) {
+            Ok(()) => (),
+            Err(msg) => eprintln!("Send failed for track {} - {:?}", track_string, msg.to_string()),
         }
     }
 
@@ -244,7 +231,7 @@ fn test_parse_track_none() {
 
 #[test]
 fn test_process_track() {
-    let test_track_path = "tracks_test.log";
+    let test_track_path = "..\tracks_test.log";
 
     let track: Track = Track {
         title: "title".to_string(), 

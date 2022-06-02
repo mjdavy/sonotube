@@ -11,5 +11,5 @@ async-std = "1"
 tokio = { version = "1.18.2", features = ["full"] }
 regex = "1"
 duration-string = { path = "../duration-string" }
-youtube-api = "0.1.2"
+youtube-api = { path = "../youtube-rs"}
 failure = "0.1.8"
