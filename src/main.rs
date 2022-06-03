@@ -1,91 +1,88 @@
 use std::collections::HashSet;
 use sonos::{self, Track};
-use sonos::Speaker;
 use async_std::{task};
+use tokio::task::JoinHandle;
 use std::time::Duration;
 use async_std::prelude::*;
-use async_std::fs::OpenOptions;
 use duration_string::DurationString;
 use std::sync::mpsc;
 
+
 mod tube;
 
-static TRACK_FILE_PATH: &str = "tracks.log";
 const TRACK_REGEX: &str = "Track \\{ title: \"(.+?)\", artist: \"(.+?)\", album: (Some(.+?)|None), queue_position: (.+?), uri: \"(.+?)\", duration: (.+?), running_time: (.+?) \\}";
 
 #[tokio::main]
 async fn main()  {
+
+    let (sender, receiver) = mpsc::channel::<Track>();
+
+    let track_monitor_handle = start_track_monitor(sender).await;
+    let tube_monitor_handle = start_tube_monitor(receiver).await;
     
-    // find sonos devices on the network and print them out
-    println!("Looking for sonos devices...");
-
-    let devices = match sonos::discover().await {
-        Ok(speakers) => speakers, 
-        Err(err) => { 
-            eprintln!("{}", err); 
-            return; 
-        },
-    };
-
-    println!("Found {} devices", devices.len());
-
-    let sender = start_tube_monitor().await;
-    start_track_monitor(&devices,TRACK_FILE_PATH, &sender).await;
-
+    track_monitor_handle.await.expect("track_monitor panicked");
+    tube_monitor_handle.await.expect("tube_monitor panicked");
 }
 
-async fn start_tube_monitor() -> mpsc::Sender<Track>
+async fn start_tube_monitor(receiver:mpsc::Receiver<Track>) -> JoinHandle<()>
 {
-    
-    // Build the communication channel
-   
-    let (sender, receiver) = mpsc::channel::<Track>();
-    
     tokio::spawn(async move {
-        eprintln!("Authenticating...");
         let mut tube = tube::Tube::new();
-        tube.authenticate().await;
+        if !tube.authenticate().await {
+            panic!("YouTube authentication failed");
+        }
+        
         for track in receiver {
             tube.process_track(&track).await;
         }
-    });
-    return sender;
+    })
 }
 
-async fn start_track_monitor(devices: &Vec<Speaker>, path:&str, sender:&mpsc::Sender<Track>)
+async fn start_track_monitor(sender:mpsc::Sender<Track>) -> JoinHandle<()>
 {
+    tokio::spawn(async move  {
+
+        let track_file_path = "tracks.log".to_string();
+        // find sonos devices on the network and print them out
+        println!("Looking for sonos devices...");
+        
+        let devices = match sonos::discover().await {
+            Ok(speakers) => speakers, 
+            Err(err) => { 
+                eprintln!("{}", err); 
+                return; 
+            },
+        };
+        println!("Found {} devices", devices.len());
+            
+        // load previously seen track uris, so we don't get duplicates
+        let mut tracks = Vec::new();
+        load_tracks(&track_file_path, &mut tracks).await; 
+
+        // extract uris of previously seen tracks - send them to tube
+        let mut seen_tracks = HashSet::new();
+        for track in tracks {
+            seen_tracks.insert(track.uri.clone());
+            let track_string: String = format!("{} - {}", track.title,track.artist);
+            match sender.send(track) {
+                Ok(()) => (),
+                Err(msg) => eprintln!("Send failed for track {} - {:?}", track_string, msg.to_string()),
+            }
+        }
    
-    // load previously seen track uris, so we don't get duplicates
-    let mut tracks = Vec::new();
-    load_tracks(path, &mut tracks).await; 
-
-    // extract uris of previously seen tracks - send them to tube
-    let mut seen_tracks = HashSet::new();
-    for track in tracks {
-        seen_tracks.insert(track.uri.clone());
-        let track_string: String = format!("{} - {}", track.title,track.artist);
-        match sender.send(track) {
-            Ok(()) => (),
-            Err(msg) => eprintln!("Send failed for track {} - {:?}", track_string, msg.to_string()),
-        }
-    }
-
-    loop {
-        for device in devices {
-            if let Ok(track) = device.track().await {
-                let res = process_track(&track, path, &mut seen_tracks).await;
-                if let Err(err) = res {
-                    eprintln!("{:?}", err);
+        loop {
+            for device in &devices {
+                if let Ok(track) = device.track().await {
+                    seen_tracks.insert(track.uri.clone());
+                    
+                    if sender.send(track).is_err() {
+                        eprintln!("Send failed");
+                    }
                 } 
-                
-                if sender.send(track).is_err() {
-                    eprintln!("Send failed");
-                }
-                
-            } 
+            }
+            task::sleep(Duration::from_secs(30)).await
         }
-        task::sleep(Duration::from_secs(30)).await
-    }
+    })
     
 }
 
@@ -145,25 +142,6 @@ fn parse_track(line: &str) -> Option<Track>
     Some(track)
 }
 
-async fn process_track(track: &Track, path: &str, tracks: &mut HashSet<String>) -> Result<(),std::io::Error>
-{
-    if tracks.contains(&track.uri) {
-        return Ok(());
-    }
-
-    tracks.insert(track.uri.clone());
-
-    // log the track
-    let mut buffer = OpenOptions::new()
-            .append(true)
-            .create(true)
-            .open(path)
-            .await?;
-
-    buffer.write_fmt(format_args!("{:?}\n", track)).await?;
-
-    Ok(())
-}
 
 #[test]
 fn test_load_tracks()
@@ -181,29 +159,6 @@ fn test_duration_string()
     assert_eq!(nanos_20.subsec_nanos(),20);
 }
 
-#[test]
-fn test_parse_track_some() {
-    let line = "Track { title: \"Interstellar\", artist: \"Deep Forest & Gaudi\", album: Some(\"Epic Circuits\"), queue_position: 1, uri: \"x-sonos-http:librarytrack%3ai.qYglBfAaQNa0.mp4?sid=204&flags=8232&sn=3\", duration: 290s, running_time: 40s }";
-    let track: Track = Track {
-        title: "Interstellar".to_string(), 
-        artist: "Deep Forest & Gaudi".to_string(), 
-        album: Some("(\"Epic Circuits\")".to_string()), 
-        queue_position: 1, 
-        uri: "x-sonos-http:librarytrack%3ai.qYglBfAaQNa0.mp4?sid=204&flags=8232&sn=3".to_string(),
-        duration: Duration::from_secs(290),
-        running_time: Duration::from_secs(40)
-    };
-    
-    let parsed_track = parse_track(line).unwrap();
-    assert_eq!(parsed_track.uri,track.uri);
-    assert_eq!(parsed_track.title,track.title);
-    assert_eq!(parsed_track.artist,track.artist);
-    assert_eq!(parsed_track.album,track.album);
-    assert_eq!(parsed_track.queue_position,track.queue_position);
-    assert_eq!(parsed_track.uri,track.uri);
-    assert_eq!(parsed_track.duration,track.duration);
-    assert_eq!(parsed_track.running_time,track.running_time);
-}
 
 #[test]
 fn test_parse_track_none() {
@@ -229,23 +184,4 @@ fn test_parse_track_none() {
     assert_eq!(parsed_track.running_time,track.running_time);
 }
 
-#[test]
-fn test_process_track() {
-    let test_track_path = "..\tracks_test.log";
-
-    let track: Track = Track {
-        title: "title".to_string(), 
-        artist: "artist".to_string(), 
-        album: Some("album".to_string()), 
-        queue_position: 1, 
-        uri: "uri".to_string(),
-        duration: Duration::from_secs(180), 
-        running_time: Duration::from_secs(10) 
-    };
-
-    let mut tracks = HashSet::new();
-    let result = task::block_on(process_track(&track, test_track_path, &mut tracks));
-    assert!(tracks.contains(&track.uri));
-    assert_eq!((), result.unwrap());
-}
 

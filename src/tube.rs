@@ -33,26 +33,28 @@ impl Tube {
     pub async fn authenticate(&mut self) -> bool {
         use std::env;
 
-        let client_id: String = match env::var("CLIENT_ID") {
+        eprintln!("Authenticating...");
+
+        let client_id: String = match env::var("SONOTUBE_CLIENT_ID") {
             Ok(id) => id,
             Err(e) => {
-                 eprintln!("CLIENT_ID {e}"); 
+                 eprintln!("SONOTUBE_CLIENT_ID {e}"); 
                  return false;
             },
         };
     
-        let client_secret: String = match env::var("CLIENT_SECRET") {
+        let client_secret: String = match env::var("SONOTUBE_CLIENT_SECRET") {
             Ok(secret) => secret,
             Err(e) => {
-                eprintln!("CLIENT_SECRET {e}");
+                eprintln!("SONOTUBE_CLIENT_SECRET {e}");
                 return false;
             }
         };
 
-        let api_key: String = match env::var("API_KEY") {
+        let api_key: String = match env::var("SONOTUBE_API_KEY") {
             Ok(secret) => secret,
             Err(e) => {
-                eprintln!("API_KEY {e}");
+                eprintln!("SONOTUBE_API_KEY {e}");
                 return false;
             }
         };
@@ -77,7 +79,6 @@ impl Tube {
         }
 
         if !api.has_token() {
-        
             api.login(sonotube_login).await.unwrap();  
             let result = api.store_token().await;
             match result {
