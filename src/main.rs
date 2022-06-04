@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use sonos::{self, Track};
 use async_std::{task};
 use tokio::task::JoinHandle;
@@ -6,7 +5,30 @@ use std::time::Duration;
 use async_std::prelude::*;
 use duration_string::DurationString;
 use std::sync::mpsc;
+use serde::{Serialize, Deserialize};
+use std::{fs::OpenOptions, io::Write, collections::HashMap};
+use std::path::PathBuf;
+use dirs;
 
+const TRACK_CACHE: &str = ".sonotube_tracks.json";
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(remote = "Track")]
+struct TrackDef {
+    pub title: String,
+    pub artist: String,
+    pub album: Option<String>,
+    pub queue_position: u64,
+    pub uri: String,
+    pub duration: Duration,
+    pub running_time: Duration,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct SerTrack {
+    #[serde(with = "TrackDef")]
+    track: Track,
+}
 
 mod tube;
 
@@ -41,11 +63,8 @@ async fn start_tube_monitor(receiver:mpsc::Receiver<Track>) -> JoinHandle<()>
 async fn start_track_monitor(sender:mpsc::Sender<Track>) -> JoinHandle<()>
 {
     tokio::spawn(async move  {
-
-        let track_file_path = "tracks.log".to_string();
-        // find sonos devices on the network and print them out
+        // find sonos devices on the network
         println!("Looking for sonos devices...");
-        
         let devices = match sonos::discover().await {
             Ok(speakers) => speakers, 
             Err(err) => { 
@@ -54,27 +73,11 @@ async fn start_track_monitor(sender:mpsc::Sender<Track>) -> JoinHandle<()>
             },
         };
         println!("Found {} devices", devices.len());
-            
-        // load previously seen track uris, so we don't get duplicates
-        let mut tracks = Vec::new();
-        load_tracks(&track_file_path, &mut tracks).await; 
-
-        // extract uris of previously seen tracks - send them to tube
-        let mut seen_tracks = HashSet::new();
-        for track in tracks {
-            seen_tracks.insert(track.uri.clone());
-            let track_string: String = format!("{} - {}", track.title,track.artist);
-            match sender.send(track) {
-                Ok(()) => (),
-                Err(msg) => eprintln!("Send failed for track {} - {:?}", track_string, msg.to_string()),
-            }
-        }
-   
+        
+        // poll found devices for new tracks
         loop {
             for device in &devices {
                 if let Ok(track) = device.track().await {
-                    seen_tracks.insert(track.uri.clone());
-                    
                     if sender.send(track).is_err() {
                         eprintln!("Send failed");
                     }
@@ -86,38 +89,37 @@ async fn start_track_monitor(sender:mpsc::Sender<Track>) -> JoinHandle<()>
     
 }
 
-async fn load_tracks(path: &str, tracks: &mut Vec<Track>) 
+fn load_tracks(file_name: &str) -> HashMap<String, SerTrack>
 {
-    use async_std::io::BufReader;
-    use async_std::fs::File;
+    use std::fs;
+    let tracks_path = get_tracks_path(file_name);
 
-    eprintln!("Loading tracks file...");
-
-    let open_file_for_read = File::open(path).await;
-
-    let file = match open_file_for_read {
-        Ok(it) => it,
-        Err(err) => {
-            eprintln!("Unable to open track file: {:?}", err);
-            return;
-        }
-    };
-
-    // load buffer
-    let mut reader = BufReader::new(file);
-    let mut buffer = String::new();
-    if let Err(err) = reader.read_to_string(&mut buffer).await {
-        eprintln!("Unable to read track file: {:?}", err); 
-        return; 
+    if !tracks_path.exists() {
+        return HashMap::new();
     }
 
-    // parse contents and build Hashset
-    for line in buffer.lines()
-    {
-        if let Some(track) = parse_track(line) {
-            tracks.push(track);
-        }
-    }
+    let serialized = fs::read_to_string(tracks_path).expect("Unable to load tracks");
+    serde_json::from_str(&serialized).unwrap()
+}
+
+fn save_tracks(file_name: &str, tracks: &HashMap<String, SerTrack>)
+{
+    let tracks_path = get_tracks_path(file_name);
+
+    let mut log = OpenOptions::new()
+    .write(true)
+    .create(true)
+    .open(&tracks_path).expect(format!("Unable to open {:?} for writing", &tracks_path).as_str());
+
+    let serialized = serde_json::to_string(&tracks).unwrap();
+    log.write_all(serialized.as_bytes()).expect("Unable to save tracks");
+}
+
+fn get_tracks_path(file_name: &str) -> PathBuf
+{
+    let mut tracks_path = dirs::home_dir().expect("The home directory was not found.");
+    tracks_path.push(file_name);
+    tracks_path
 }
 
 fn parse_track(line: &str) -> Option<Track>
@@ -142,15 +144,41 @@ fn parse_track(line: &str) -> Option<Track>
     Some(track)
 }
 
-
 #[test]
-fn test_load_tracks()
+fn test_load_save_tracks()
 {
-    let path = "tracks_load_test.log";
-    let mut tracks = Vec::new();
-    task::block_on(load_tracks(path, &mut tracks)); 
-    assert_eq!(40,tracks.len());
+    let track = Track {
+        title: "test_title".to_string(), 
+        artist: "test_artist".to_string(), 
+        album: Some("test_album".to_string()), 
+        queue_position: 1, 
+        uri: "test_uri".to_string(),
+        duration: Duration::from_secs(10),
+        running_time: Duration::from_secs(100)
+    };
+
+    let mut track_map = HashMap::new();
+    track_map.insert(track.uri.clone(), SerTrack {track: track});
+
+    let test_file_name = ".test_track_cache.json";
+    save_tracks(test_file_name, &track_map);
+    assert!(get_tracks_path(test_file_name).exists());
+
+    let loaded_tracks = load_tracks(test_file_name);
+    assert_eq!(1, loaded_tracks.len());
+
+    let test_track = loaded_tracks.values().take(1).next().unwrap();
+
+    assert_eq!("test_title", &test_track.track.title);
+    assert_eq!("test_artist", &test_track.track.artist);
+    assert_eq!("test_album", test_track.track.album.as_ref().unwrap());
+    assert_eq!(1, test_track.track.queue_position);
+    assert_eq!("test_uri", &test_track.track.uri);
+    assert_eq!(Duration::from_secs(10), test_track.track.duration);
+    assert_eq!("test_artist", &test_track.track.artist);
+    
 }
+
 
 #[test]
 fn test_duration_string()

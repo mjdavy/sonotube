@@ -13,3 +13,6 @@ regex = "1"
 duration-string = { git = "https://github.com/mjdavy/duration-string.git" }
 youtube-api = { git = "https://github.com/mjdavy/youtube-rs.git"}
 failure = "0.1.8"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+dirs = "4"
