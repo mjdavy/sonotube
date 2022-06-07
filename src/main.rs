@@ -2,17 +2,15 @@ use sonos::{self, Track};
 use async_std::{task};
 use tokio::task::JoinHandle;
 use std::time::Duration;
-use async_std::prelude::*;
-use duration_string::DurationString;
 use std::sync::mpsc;
 use serde::{Serialize, Deserialize};
-use std::{fs::OpenOptions, io::Write, collections::HashMap};
+use std::{fs::OpenOptions, collections::HashMap};
 use std::path::PathBuf;
 use dirs;
 
 const TRACK_CACHE: &str = ".sonotube_tracks.json";
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(remote = "Track")]
 struct TrackDef {
     pub title: String,
@@ -30,9 +28,27 @@ struct SerTrack {
     track: Track,
 }
 
-mod tube;
+impl Clone for SerTrack {
+   fn clone(&self) -> Self {
+        Self {
+            track: Track {
+                title: self.track.title.clone(), 
+                artist: self.track.artist.clone(), 
+                album: self.track.album.clone(), 
+                queue_position: self.track.queue_position, 
+                uri: self.track.uri.clone(), 
+                duration: self.track.duration.clone(), 
+                running_time: self.track.running_time.clone() 
+            }
+        }
+    }
 
-const TRACK_REGEX: &str = "Track \\{ title: \"(.+?)\", artist: \"(.+?)\", album: (Some(.+?)|None), queue_position: (.+?), uri: \"(.+?)\", duration: (.+?), running_time: (.+?) \\}";
+    fn clone_from(&mut self, source: &Self) {
+        self.track = source.clone().track;
+    }
+}
+
+mod tube;
 
 #[tokio::main]
 async fn main()  {
@@ -63,31 +79,36 @@ async fn start_tube_monitor(receiver:mpsc::Receiver<Track>) -> JoinHandle<()>
 async fn start_track_monitor(sender:mpsc::Sender<Track>) -> JoinHandle<()>
 {
     tokio::spawn(async move  {
+        
         // find sonos devices on the network
-        println!("Looking for sonos devices...");
-        let devices = match sonos::discover().await {
-            Ok(speakers) => speakers, 
-            Err(err) => { 
-                eprintln!("{}", err); 
-                return; 
-            },
-        };
-        println!("Found {} devices", devices.len());
+        let devices = sonos::discover().await.unwrap();
+        println!("Found {} devices on your network", devices.len());
+
+        // send previously seen tracks
+        let mut tracks = load_tracks(TRACK_CACHE);
+        for ser_track in tracks.values()
+        {
+            let track = ser_track.clone().track;
+            sender.send(track).unwrap();
+        }
         
         // poll found devices for new tracks
         loop {
             for device in &devices {
                 if let Ok(track) = device.track().await {
-                    if sender.send(track).is_err() {
-                        eprintln!("Send failed");
-                    }
+                    let ser_track = SerTrack { track: track };
+                    sender.send(ser_track.clone().track).unwrap();
+                    tracks.insert(ser_track.track.uri.clone(), ser_track);
                 } 
             }
+
+            save_tracks(TRACK_CACHE, &tracks); // should consider using a DB here.
+            
             task::sleep(Duration::from_secs(30)).await
         }
     })
-    
 }
+
 
 fn load_tracks(file_name: &str) -> HashMap<String, SerTrack>
 {
@@ -106,13 +127,13 @@ fn save_tracks(file_name: &str, tracks: &HashMap<String, SerTrack>)
 {
     let tracks_path = get_tracks_path(file_name);
 
-    let mut log = OpenOptions::new()
+    let log = OpenOptions::new()
     .write(true)
     .create(true)
     .open(&tracks_path).expect(format!("Unable to open {:?} for writing", &tracks_path).as_str());
 
-    let serialized = serde_json::to_string(&tracks).unwrap();
-    log.write_all(serialized.as_bytes()).expect("Unable to save tracks");
+    let mut serializer = serde_json::Serializer::new(log);
+    tracks.serialize(&mut serializer).expect("Unable to save tracks");
 }
 
 fn get_tracks_path(file_name: &str) -> PathBuf
@@ -120,28 +141,6 @@ fn get_tracks_path(file_name: &str) -> PathBuf
     let mut tracks_path = dirs::home_dir().expect("The home directory was not found.");
     tracks_path.push(file_name);
     tracks_path
-}
-
-fn parse_track(line: &str) -> Option<Track>
-{
-    use regex::Regex;
-    let re = Regex::new(TRACK_REGEX).unwrap();
-    let cap = re.captures(line).unwrap();
-    assert_eq!(cap.len(),9);
-
-    let album = |n: String| { if n == "None" {None} else { Some(cap[4].to_string()) } };
-    
-    let track: Track = Track {
-        title: cap[1].to_string(), 
-        artist: cap[2].to_string(), 
-        album: album(cap[3].to_string()), 
-        queue_position: u64::from_str_radix(&cap[5], 10).unwrap(), 
-        uri: cap[6].to_string(),
-        duration: DurationString::from_string(cap[7].to_string()).unwrap().into(), 
-        running_time: DurationString::from_string(cap[8].to_string()).unwrap().into() 
-    };
-
-    Some(track)
 }
 
 #[test]
@@ -178,38 +177,3 @@ fn test_load_save_tracks()
     assert_eq!("test_artist", &test_track.track.artist);
     
 }
-
-
-#[test]
-fn test_duration_string()
-{
-    let nanos_20:Duration = DurationString::from_string("20ns".to_string()).unwrap().into();
-    assert_eq!(nanos_20.subsec_nanos(),20);
-}
-
-
-#[test]
-fn test_parse_track_none() {
-    let line = "Track { title: \"title\", artist: \"artist\", album: None, queue_position: 2, uri: \"uri\", duration: 300s, running_time: 50s }";
-    let track: Track = Track {
-        title: "title".to_string(), 
-        artist: "artist".to_string(), 
-        album: None, 
-        queue_position: 2, 
-        uri: "uri".to_string(),
-        duration: Duration::from_secs(300),
-        running_time: Duration::from_secs(50)
-    };
-    
-    let parsed_track = parse_track(line).unwrap();
-    assert_eq!(parsed_track.uri,track.uri);
-    assert_eq!(parsed_track.title,track.title);
-    assert_eq!(parsed_track.artist,track.artist);
-    assert_eq!(parsed_track.album,track.album);
-    assert_eq!(parsed_track.queue_position,track.queue_position);
-    assert_eq!(parsed_track.uri,track.uri);
-    assert_eq!(parsed_track.duration,track.duration);
-    assert_eq!(parsed_track.running_time,track.running_time);
-}
-
-
