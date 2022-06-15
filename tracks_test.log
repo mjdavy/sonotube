@@ -1,0 +1,3 @@
+Track { title: "title", artist: "artist", album: Some("album"), queue_position: 1, uri: "uri", duration: 180s, running_time: 10s }
+Track { title: "title", artist: "artist", album: Some("album"), queue_position: 1, uri: "uri", duration: 180s, running_time: 10s }
+Track { title: "title", artist: "artist", album: Some("album"), queue_position: 1, uri: "uri", duration: 180s, running_time: 10s }

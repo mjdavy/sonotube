@@ -1,127 +1,157 @@
 
+use dirs;
 use sonos::{self, Track};
-use std::{collections::HashSet};
-use youtube_api::{YoutubeApi};
+use std::collections::HashSet;
 use std::io;
-use youtube_api::models::SearchRequestBuilder;
+use std::path::{Path, PathBuf};
+use yup_oauth2::{AccessToken, InstalledFlowAuthenticator, InstalledFlowReturnMethod};
+use crate::models::*;
+use std::env;
+    
+const CLIENT_SECRETS_PATH: &str = r"D:\secrets\sonotube\client_secrets.json";
+const TOKEN_CACHE_FILE: &str = "sonotube_token_cache.json";
+const PLAYLISTS_URI: &str = "https://www.googleapis.com/youtube/v3/playlists";
+const SEARCH_URI: &str = "https://www.googleapis.com/youtube/v3/search";
 
 pub struct Tube {
     pub seen: HashSet<String>,
-    api:Option<YoutubeApi>,
-}
-
-pub fn sonotube_login(url: String) -> String {
-    
-    println!("1. Open this URL in your browser:\n\n{}\n", url);
-    println!("2. Copy access code from browser\n");
-    println!("3. Paste access code below:");
-
-    let mut code = String::new();
-    io::stdin().read_line(&mut code).unwrap();
-
-    code
+    token: Option<AccessToken>,
 }
 
 impl Tube {
     pub fn new() -> Tube {
-        Tube { 
+        Tube {
             seen: HashSet::new(),
-            api: None
+            token: None,
         }
     }
 
-    pub async fn authenticate(&mut self) -> bool {
-        use std::env;
+    fn get_token_cache_path(&mut self, file_name: &str) -> PathBuf {
+        let mut token_cache = dirs::cache_dir().expect("The cache directory was not found.");
+        token_cache.push(file_name);
+        token_cache
+    }
 
-        eprintln!("Authenticating...");
+    async fn authenticate(&mut self)  {
+        // Load the client secrets from the client_secrets.json path.
+        let secrets_path = Path::new(CLIENT_SECRETS_PATH);
+        let secret = yup_oauth2::read_application_secret(secrets_path)
+            .await
+            .expect(secrets_path.to_str().unwrap());
 
-        let client_id: String = match env::var("SONOTUBE_CLIENT_ID") {
-            Ok(id) => id,
-            Err(e) => {
-                 eprintln!("SONOTUBE_CLIENT_ID {e}"); 
-                 return false;
+        // Create an authenticator that uses an InstalledFlow to authenticate. The
+        // authentication tokens are persisted to a file named tokencache.json. The
+        // authenticator takes care of caching tokens to disk and refreshing tokens once
+        // they've expired.
+        let auth =
+            InstalledFlowAuthenticator::builder(secret, InstalledFlowReturnMethod::HTTPRedirect)
+                .persist_tokens_to_disk(self.get_token_cache_path(TOKEN_CACHE_FILE).to_str().unwrap())
+                .build()
+                .await
+                .unwrap();
+
+        // Obtain a token that can be sent e.g. as Bearer token.
+        let scopes = &["https://www.googleapis.com/auth/youtube"];
+
+        self.token = match auth.token(scopes).await {
+            Ok(token) => Some(token),
+            Err(err) => {
+                eprintln!("Failed to obtain access token: {:?}", err);
+                panic!("{:?}",err);
+            }
+        }
+    }
+
+    pub async fn process_track(&mut self, track: &Track) {
+        eprintln!("Tube:: Received {} by {}", track.title, track.artist);
+        if self.seen.insert(track.uri.clone()) {
+            eprintln!("Tube::processing track {} by {}", track.title, track.artist);
+            if let Some(video_id) = self.find_video_id_for_track(track).await {
+                eprintln!("Now get video info for {}", video_id);
+            }
+        } else {
+            eprintln!(
+                "Tube::ingoring track {} by {} - already processed",
+                track.title, track.artist
+            );
+        }
+    }
+
+    async fn insert_playlist(&mut self, playlist_title: &str, playlist_description: &str) {
+        
+        if self.token.is_none() {
+            self.authenticate().await;
+        }
+
+        let playlist = Playlist { 
+            snippet: PlaylistSnippet {
+                title: Some(String::from(playlist_title)), 
+                description: Some(String::from(playlist_description)),
+                channel_id: None,
+                channel_title: None,
+                default_language: None,
+                localized: None,
+                published_at: None,
+                tags: None,
+                thumbnail_video_id: None,
+                thumbnails: None,
+            },
+            status: PlaylistStatus {
+                privacy_status: Some(String::from("private")),
             },
         };
+
+        let token_str = self.token.as_ref().unwrap().as_str();
     
-        let client_secret: String = match env::var("SONOTUBE_CLIENT_SECRET") {
-            Ok(secret) => secret,
-            Err(e) => {
-                eprintln!("SONOTUBE_CLIENT_SECRET {e}");
-                return false;
+        let client = reqwest::Client::new();
+        let res = client.post(PLAYLISTS_URI)
+            .query(&[("part","snippet,status")])
+            .bearer_auth(token_str)
+            .json(&playlist)
+            .send()
+            .await;
+        match res {
+            Ok(res) => {
+                println!("");
             }
+            Err(e) => println!("Error: {}", e),
+        }
+    }
+
+    async fn find_video_id_for_track(&mut self, track: &Track) -> Option<String> {
+
+        if self.token.is_none() {
+            self.authenticate().await;
+        }
+    
+        let request = SearchRequestBuilder {
+            query: Some(format!("{} - {}", track.title, track.artist)),
+            channel_id: None,
         };
 
         let api_key: String = match env::var("SONOTUBE_API_KEY") {
             Ok(secret) => secret,
             Err(e) => {
-                eprintln!("SONOTUBE_API_KEY {e}");
-                return false;
+                println!("SONOTUBE_API_KEY {e}");
+                return None;
             }
         };
 
-        let api = match YoutubeApi::new_with_oauth (
-            api_key, client_id, client_secret,None)
-            {
-                Ok(api) => api,
-                Err(err) => {
-                    eprintln!("Youtube authorization failed {}", err.to_string());
-                    return false;
-                },
-            };
-
-        match api.load_token().await {
-            Ok(()) => {
-                eprintln!("Loaded token");
+        let token_str = self.token.as_ref().unwrap().as_str();
+        let client = reqwest::Client::new();
+        let res = client.get(SEARCH_URI)
+            .query(&request.build(api_key.as_str()))
+            .bearer_auth(token_str)
+            .send()
+            .await;
+        match res {
+            Ok(res) => {
+                println!("{:?}", res);
             }
-            Err(msg) => {
-                eprintln!("Unable to load token {:?}", msg);
-            }
+            Err(e) => println!("Error: {}", e),
         }
-
-        if !api.has_token() {
-            api.login(sonotube_login).await.unwrap();  
-            let result = api.store_token().await;
-            match result {
-                Ok(()) => (),
-                Err(msg) => {
-                    eprintln!("Unable to store token: {:?}", msg);
-                }
-            }
-        }
-
-        self.api = Some(api);  
-        println!("\nAuthenticated successfully\n");
-        return true;
+        return None;
     }
-
-    pub async fn process_track(&mut self, track: &Track) {
-
-        eprintln!("Tube:: Received {} by {}", track.title, track.artist);
-        if self.seen.insert(track.uri.clone()) {
-            eprintln!("Tube::processing track {} by {}", track.title, track.artist);
-            self.find_track_info(track).await;
-        }
-        else {
-            eprintln!("Tube::ingoring track {} by {} - already processed", track.title, track.artist);
-        }
-    }
-
-    async fn find_track_info(&mut self, track: &Track) {
-        let request = SearchRequestBuilder {
-           query: Some(format!("{} - {}", track.title, track.artist)),
-           channel_id: None
-        };
-        
-        match self.api.as_ref().unwrap().search(request).await {
-            Ok(val) => {
-                eprintln!("Search returned: {:?}", val);
-            }
-            Err(msg) => {
-                eprintln!("Search failed: {}", msg);
-            }
-        }
-    }
-   
 }
 
 #[tokio::test]
@@ -139,8 +169,5 @@ async fn test_process_track() {
     };
 
     let mut tube = Tube::new();
-    let success = tube.authenticate().await;
-    assert_eq!(true, success);
     tube.process_track(&track).await;
 }
-

@@ -49,6 +49,7 @@ impl Clone for SerTrack {
 }
 
 mod tube;
+mod models;
 
 #[tokio::main]
 async fn main()  {
@@ -66,10 +67,6 @@ async fn start_tube_monitor(receiver:mpsc::Receiver<Track>) -> JoinHandle<()>
 {
     tokio::spawn(async move {
         let mut tube = tube::Tube::new();
-        if !tube.authenticate().await {
-            panic!("YouTube authentication failed");
-        }
-        
         for track in receiver {
             tube.process_track(&track).await;
         }
