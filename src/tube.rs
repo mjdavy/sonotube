@@ -4,6 +4,7 @@ use sonos::{self, Track};
 use std::collections::HashSet;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 use yup_oauth2::{AccessToken, InstalledFlowAuthenticator, InstalledFlowReturnMethod};
 use crate::models::*;
 use std::env;
@@ -83,23 +84,10 @@ impl Tube {
             self.authenticate().await;
         }
 
-        let playlist = Playlist { 
-            snippet: PlaylistSnippet {
-                title: Some(String::from(playlist_title)), 
-                description: Some(String::from(playlist_description)),
-                channel_id: None,
-                channel_title: None,
-                default_language: None,
-                localized: None,
-                published_at: None,
-                tags: None,
-                thumbnail_video_id: None,
-                thumbnails: None,
-            },
-            status: PlaylistStatus {
-                privacy_status: Some(String::from("private")),
-            },
-        };
+        let mut playlist = Playlist::default();
+        playlist.snippet.title = Some(String::from(playlist_title));
+        playlist.snippet.description = Some(String::from(playlist_description)); 
+        playlist.status.privacy_status = Some(String::from("private")); 
 
         let token_str = self.token.as_ref().unwrap().as_str();
     
@@ -119,13 +107,9 @@ impl Tube {
     }
 
     async fn find_video_id_for_track(&mut self, track: &Track) -> Option<String> {
-
-        if self.token.is_none() {
-            self.authenticate().await;
-        }
     
         let request = SearchRequestBuilder {
-            query: Some(format!("{} - {}", track.title, track.artist)),
+            query: Some(format!("{} {}", track.title, track.artist)),
             channel_id: None,
         };
 
@@ -137,11 +121,9 @@ impl Tube {
             }
         };
 
-        let token_str = self.token.as_ref().unwrap().as_str();
         let client = reqwest::Client::new();
         let res = client.get(SEARCH_URI)
             .query(&request.build(api_key.as_str()))
-            .bearer_auth(token_str)
             .send()
             .await;
         match res {
@@ -170,4 +152,22 @@ async fn test_process_track() {
 
     let mut tube = Tube::new();
     tube.process_track(&track).await;
+}
+
+#[tokio::test]
+async fn test_find_video_id_for_track() {
+    let track = Track {
+        title: String::from("shape of you"),
+        artist: String::from("ed shiran"),
+        album: None,
+        queue_position: 1,
+        uri: String::from("uri"),
+        duration: Duration::from_secs(0),
+        running_time: Duration::from_secs(0),
+    };
+    
+    let mut tube = Tube::new();
+    let res = tube.find_video_id_for_track(&track).await;
+
+    println!("{:?}", res);
 }
