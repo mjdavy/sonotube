@@ -2,12 +2,14 @@
 use dirs;
 use sonos::{self, Track};
 use std::collections::HashSet;
-use std::io;
+use std::{io, result};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use yup_oauth2::{AccessToken, InstalledFlowAuthenticator, InstalledFlowReturnMethod};
 use crate::models::*;
 use std::env;
+use reqwest::{Client, get, RequestBuilder, StatusCode};
+use failure::Error;
     
 const CLIENT_SECRETS_PATH: &str = r"D:\secrets\sonotube\client_secrets.json";
 const TOKEN_CACHE_FILE: &str = "sonotube_token_cache.json";
@@ -17,6 +19,7 @@ const SEARCH_URI: &str = "https://www.googleapis.com/youtube/v3/search";
 pub struct Tube {
     pub seen: HashSet<String>,
     token: Option<AccessToken>,
+    client: Client,
 }
 
 impl Tube {
@@ -24,6 +27,7 @@ impl Tube {
         Tube {
             seen: HashSet::new(),
             token: None,
+            client: Client::new()
         }
     }
 
@@ -91,8 +95,7 @@ impl Tube {
 
         let token_str = self.token.as_ref().unwrap().as_str();
     
-        let client = reqwest::Client::new();
-        let res = client.post(PLAYLISTS_URI)
+        let res = self.client.post(PLAYLISTS_URI)
             .query(&[("part","snippet,status")])
             .bearer_auth(token_str)
             .json(&playlist)
@@ -107,8 +110,8 @@ impl Tube {
     }
 
     async fn find_video_id_for_track(&mut self, track: &Track) -> Option<String> {
-    
-        let request = SearchRequestBuilder {
+
+        let search_request = SearchRequestBuilder {
             query: Some(format!("{} {}", track.title, track.artist)),
             channel_id: None,
         };
@@ -121,18 +124,41 @@ impl Tube {
             }
         };
 
-        let client = reqwest::Client::new();
-        let res = client.get(SEARCH_URI)
-            .query(&request.build(api_key.as_str()))
+        let request = search_request.build(api_key);
+        let result = self.client.get(SEARCH_URI)
+            .query(&request)
             .send()
             .await;
-        match res {
-            Ok(res) => {
-                println!("{:?}", res);
+        let response = match result {
+            Ok(res) => res,
+            Err(err) => {
+                eprintln!("Error: failed to get search results. {:?}", err);
+                return None;
+            },
+        };
+
+        if response.error_for_status_ref().is_ok() {
+            let search_result: Result<SearchResponse, reqwest::Error>= response.json().await;
+            match search_result {
+                Ok(search_result) => {
+                    println!("{:?}", search_result);
+                    let items = search_result.items;
+                    let id = 
+                        items.first().map(|item| &item.id).unwrap();
+                    let video_id = &id.clone().into_inner();
+                    return Some(video_id.into());
+                }
+                Err(e) => {
+                    eprintln!("Error: failed to parse search results: {:?}", e);
+                    None
+                }
             }
-            Err(e) => println!("Error: {}", e),
+        } else {
+            let err: GoogleErrorResponse = response.json().await.unwrap();
+            eprintln!("{:?}", err);
+            return None;
         }
-        return None;
+        
     }
 }
 
