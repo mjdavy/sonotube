@@ -194,6 +194,7 @@ async fn test_find_video_id_for_track() {
     
     let mut tube = Tube::new();
     let res = tube.find_video_id_for_track(&track).await;
-
     println!("{:?}", res);
+    assert!(res.is_some());
+    assert_eq!(res.unwrap(),"JGwWNGJdvx8");
 }
