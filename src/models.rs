@@ -16,7 +16,8 @@ impl SearchRequestBuilder {
             part: String::from("snippet"),
             key: api_key.into(),
             query: self.query,
-            channel_id: self.channel_id,
+            _type: Some(String::from("video")),
+            max_results: Some(1),
         }
     }
 }
@@ -28,7 +29,9 @@ pub struct SearchRequest {
     key: String,
     #[serde(rename = "q")]
     query: Option<String>,
-    channel_id: Option<String>,
+    #[serde(rename = "type")]
+    _type: Option<String>,
+    max_results: Option<u64>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -115,41 +118,13 @@ impl Id {
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PlaylistSnippet {
-    /// The ID that YouTube uses to uniquely identify the channel that published the playlist.
-    pub channel_id: Option<String>,
-    /// The channel title of the channel that the video belongs to.
-    pub channel_title: Option<String>,
-    /// The language of the playlist's default title and description.
-    pub default_language: Option<String>,
-    /// The playlist's description.
-    pub description: Option<String>,
-    /// Localized title and description, read-only.
-    pub localized: Option<PlaylistLocalization>,
-    /// The date and time that the playlist was created.
     pub published_at: Option<String>,
-    /// Keyword tags associated with the playlist.
-    pub tags: Option<Vec<String>>,
-    /// Note: if the playlist has a custom thumbnail, this field will not be populated. The video id selected by the user that will be used as the thumbnail of this playlist. This field defaults to the first publicly viewable video in the playlist, if: 1. The user has never selected a video to be the thumbnail of the playlist. 2. The user selects a video to be the thumbnail, and then removes that video from the playlist. 3. The user selects a non-owned video to be the thumbnail, but that video becomes private, or gets deleted.
-    pub thumbnail_video_id: Option<String>,
-    /// A map of thumbnail images associated with the playlist. For each object in the map, the key is the name of the thumbnail image, and the value is an object that contains other information about the thumbnail.
-    pub thumbnails: Option<ThumbnailDetails>,
-    /// The playlist's title.
+    pub channel_id: Option<String>,
     pub title: Option<String>,
-}
-
-#[derive(Default, Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ThumbnailDetails {
-    /// The default image for this resource.
-    pub default: Option<Thumbnail>,
-    /// The high quality image for this resource.
-    pub high: Option<Thumbnail>,
-    /// The maximum resolution quality image for this resource.
-    pub maxres: Option<Thumbnail>,
-    /// The medium quality image for this resource.
-    pub medium: Option<Thumbnail>,
-    /// The standard quality image for this resource.
-    pub standard: Option<Thumbnail>,
+    pub description: Option<String>,
+    pub tumbnails: Option<HashMap<String, Thumbnail>>,
+    pub channel_title: Option<String>,
+    pub localized: Option<PlaylistLocalization>,
 }
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
@@ -177,23 +152,12 @@ pub struct PlaylistLocalization {
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct PlaylistResource {
-    /// Identifies what kind of resource this is. Value: the fixed string "youtube#playlist".
-    pub kind: Option<String>,
-    /// Etag of this resource.
-    pub etag: Option<String>,
-    /// The ID that YouTube uses to uniquely identify the playlist.
-    pub id: Option<String>,
-    /// The snippet object contains basic details about the playlist, such as its title and description.
-    pub snippet: Option<PlaylistSnippet>,
-    /// The status object contains status information for the playlist.
-    pub status: Option<PlaylistStatus>,
-    /// The contentDetails object contains information like video count.
-    pub content_details: Option<PlaylistContentDetails>,
-    /// The player object contains information that you would use to play the playlist in an embedded player.
-    pub player: Option<PlaylistPlayer>,
-    /// Localizations for different languages
-    pub localizations: Option<HashMap<String, PlaylistLocalization>>,
+pub struct PlaylistResponse {
+    // pub kind: String,
+    //pub etag: String,
+    pub id: String,
+    // pub snippet: Option<PlaylistSnippet>,
+    // pub status: Option<PlaylistStatus>,
 }
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
@@ -208,6 +172,40 @@ pub struct PlaylistContentDetails {
 pub struct PlaylistPlayer {
     /// An <iframe> tag that embeds a player that will play the playlist.
     pub embed_html: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlaylistItem {
+    snippet: PlaylistItemSnippet,
+}
+
+impl PlaylistItem {
+    pub fn new(playlist_id:String, video_id:String) -> PlaylistItem {
+        PlaylistItem { 
+            snippet: PlaylistItemSnippet {
+                playlist_id: playlist_id,
+                resource_id: PlaylistItemResource {
+                    kind: "youtube#video".to_string(),
+                    video_id: video_id,
+                },
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlaylistItemSnippet {
+    playlist_id: String,
+    resource_id: PlaylistItemResource,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlaylistItemResource {
+    kind: String,
+    video_id: String,
 }
 
 // Errors
