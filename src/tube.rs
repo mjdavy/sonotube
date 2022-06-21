@@ -212,9 +212,8 @@ impl Tube {
             .send()
             .await;
         match res {
-            Ok(res) => {
-                println!("{:?}", res);
-            }
+            // todo - might want to extract the response here and return it
+            Ok(_) => println!("Added video successfully"),
             Err(e) => println!("Error: {}", e),
         }
     }
