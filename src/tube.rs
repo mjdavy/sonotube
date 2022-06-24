@@ -12,6 +12,7 @@ const TOKEN_CACHE_FILE: &str = "sonotube_token_cache.json";
 const PLAYLISTS_URI: &str = "https://www.googleapis.com/youtube/v3/playlists";
 const SEARCH_URI: &str = "https://www.googleapis.com/youtube/v3/search";
 const PLAYLIST_ITEMS_URI: &str = "https://www.googleapis.com/youtube/v3/playlistItems";
+pub const API_KEY_VAR: &str = "SONOTUBE_API_KEY";
 
 pub struct Tube {
     pub seen: HashSet<String>,
@@ -155,10 +156,10 @@ impl Tube {
             channel_id: None,
         };
 
-        let api_key: String = match env::var("SONOTUBE_API_KEY") {
+        let api_key: String = match env::var(API_KEY_VAR) {
             Ok(secret) => secret,
             Err(e) => {
-                println!("SONOTUBE_API_KEY {e}");
+                println!("{API_KEY_VAR} {e}");
                 return None;
             }
         };

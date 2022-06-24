@@ -8,7 +8,7 @@ edition = "2021"
 [dependencies]
 sonos = { git = "https://github.com/mjdavy/sonos.rs.git" }
 async-std = "1"
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1.19.2", features = ["full"] }
 regex = "1"
 duration-string = { git = "https://github.com/mjdavy/duration-string.git" }
 failure = "0.1.8"
@@ -18,3 +18,4 @@ dirs = "4"
 yup-oauth2 = "7"
 reqwest = { version = "0.11", features = ["json"] }
 chrono = "0.4"
+

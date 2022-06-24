@@ -13,6 +13,73 @@ use chrono;
 use std::sync::Arc;
 
 const TRACK_CACHE: &str = ".sonotube_tracks.json";
+const CONFIG: &str = ".sonotube.json";
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+struct Config {
+    api_key: Option<String>,
+    create_playlist: Option<bool>,
+    send_previous_tracks: Option<bool>,
+}
+
+impl Config {
+    fn new() -> Self
+    {
+        let config = match Config::load(CONFIG) {
+            Some(config) => {
+                if let Some(value) = &config.api_key {
+                    std::env::set_var(tube::API_KEY_VAR, value)
+                }
+                config
+            }
+            None => Config { api_key: None, create_playlist: None, send_previous_tracks: None },
+        };
+        config
+    }
+
+    pub fn create_play_list(&self) -> bool 
+    {
+        match self.create_playlist {
+            Some(val) => val,
+            None => false
+        }
+    }
+
+    pub fn send_previous_tracks(&self) -> bool 
+    {
+        match self.send_previous_tracks{
+            Some(val) => val,
+            None => false
+        }
+    }
+
+    fn load(file_name: &str) -> Option<Self>
+    {
+        use std::fs;
+        let config_path = get_config_path(file_name);
+
+        if !config_path.exists() {
+            return None;
+        }
+
+        let serialized = fs::read_to_string(config_path).expect("Unable to load config");
+        serde_json::from_str(&serialized).unwrap()
+    }
+
+    pub fn _save(&self, file_name: &str)
+    {
+        let config_path = get_config_path(file_name);
+
+        let log = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .open(&config_path).expect(format!("Unable to open {:?} for writing", &config_path).as_str());
+
+        let mut serializer = serde_json::Serializer::new(log);
+        self.serialize(&mut serializer).expect("Unable to save config");
+    }
+}
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(remote = "Track")]
@@ -61,13 +128,15 @@ mod models;
 #[tokio::main]
 async fn main()  {
 
+    let config = Config::new();
+
     let (sender, receiver) = mpsc::channel::<Track>();
     let track_monitor_flag = Arc::new(AtomicBool::new(true));
 
     println!("Hit enter to quit");
     wait_for_enter_key(track_monitor_flag.clone());
     
-    let track_monitor_handle = start_track_monitor(sender, track_monitor_flag.clone()).await;
+    let track_monitor_handle = start_track_monitor(sender, track_monitor_flag.clone(), config).await;
     let tube_monitor_handle = start_tube_monitor(receiver).await;
     
     track_monitor_handle.await.expect("track_monitor panicked");
@@ -99,7 +168,7 @@ async fn start_tube_monitor(receiver:mpsc::Receiver<Track>) -> JoinHandle<()>
     })
 }
 
-async fn start_track_monitor(sender:mpsc::Sender<Track>, flag: Arc<AtomicBool>) -> JoinHandle<()>
+async fn start_track_monitor(sender:mpsc::Sender<Track>, flag: Arc<AtomicBool>, config: Config) -> JoinHandle<()>
 {
     tokio::spawn(async move  {
         
@@ -107,15 +176,15 @@ async fn start_track_monitor(sender:mpsc::Sender<Track>, flag: Arc<AtomicBool>) 
         let devices = sonos::discover().await.unwrap();
         println!("Found {} devices on your network", devices.len());
 
-        // send previously seen tracks
         let mut tracks = load_tracks(TRACK_CACHE);
-        /* 
-        for ser_track in tracks.values()
-        {
-            let track = ser_track.clone().track;
-            sender.send(track).unwrap();
+
+        if config.send_previous_tracks() { 
+            for ser_track in tracks.values()
+            {
+                let track = ser_track.clone().track;
+                sender.send(track).unwrap();
+            }
         }
-        */
         
         // poll found devices for new tracks
         let mut last_track_uri = String::from("");
@@ -130,6 +199,7 @@ async fn start_track_monitor(sender:mpsc::Sender<Track>, flag: Arc<AtomicBool>) 
                     let artist = track.artist.clone();
                     last_track_uri = track.uri.clone();
 
+                    // See if we played this track before
                     if tracks.contains_key(&track.uri) {
                         let ser_track = tracks.get_mut(&track.uri).unwrap();
                         match ser_track.play_history {
@@ -149,7 +219,12 @@ async fn start_track_monitor(sender:mpsc::Sender<Track>, flag: Arc<AtomicBool>) 
                             track: track,
                             play_history: Some(vec![now.timestamp()]),
                         };
-                        sender.send(ser_track.clone().track).unwrap();
+
+                        // add this track to the youtube playlist if config option is enabled
+                        if config.create_play_list() {
+                            sender.send(ser_track.clone().track).unwrap();
+                        }
+
                         tracks.insert(ser_track.track.uri.clone(), ser_track);
                     }
                     println!("{} by {} is playing on {}", title, artist, device.name);
@@ -187,6 +262,13 @@ fn save_tracks(file_name: &str, tracks: &HashMap<String, SerTrack>)
 
     let mut serializer = serde_json::Serializer::new(log);
     tracks.serialize(&mut serializer).expect("Unable to save tracks");
+}
+
+fn get_config_path(file_name: &str) -> PathBuf
+{
+    let mut config_path = dirs::home_dir().expect("The home directory was not found.");
+    config_path.push(file_name);
+    config_path
 }
 
 fn get_tracks_path(file_name: &str) -> PathBuf
@@ -229,4 +311,11 @@ async fn test_load_save_tracks()
     assert_eq!(Duration::from_secs(10), test_track.track.duration);
     assert_eq!("test_artist", &test_track.track.artist);
     
+}
+
+#[tokio::test]
+async fn test_config()
+{
+    let config = Config::new();
+    config._save(".test_sonotube_config.json");
 }
