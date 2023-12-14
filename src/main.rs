@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::{collections::HashMap, fs::OpenOptions};
 use tokio::task::JoinHandle;
-
+use env_logger::Env;
 
 const TRACK_CACHE: &str = ".sonotube_tracks.json";
 const CONFIG: &str = ".sonotube.json";
@@ -144,7 +144,9 @@ mod toptastic;
 
 #[tokio::main]
 async fn main() {
+
     let config = Config::new();
+    env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
 
     let (sender, receiver) = mpsc::channel::<Track>();
     let track_monitor_flag = Arc::new(AtomicBool::new(true));
