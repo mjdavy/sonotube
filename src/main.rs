@@ -1,8 +1,10 @@
 use async_std::task;
 use chrono;
 use dirs;
+use models::TubeTrack;
 use serde::{Deserialize, Serialize};
 use sonos::{self, Track};
+use tube::Tube;
 use std::io;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
@@ -11,7 +13,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::{collections::HashMap, fs::OpenOptions};
 use tokio::task::JoinHandle;
-use tube::TubeTrack;
+
 
 const TRACK_CACHE: &str = ".sonotube_tracks.json";
 const CONFIG: &str = ".sonotube.json";
@@ -153,9 +155,12 @@ async fn main() {
     let track_monitor_handle =
         start_track_monitor(sender, track_monitor_flag.clone(), config).await;
     let tube_monitor_handle = start_tube_monitor(receiver).await;
+    
+    start_toptastic_server().await.expect("toptastic server failed");
 
     track_monitor_handle.await.expect("track_monitor panicked");
     tube_monitor_handle.await.expect("tube_monitor panicked");
+   
 
     println!("Done.");
 }
@@ -172,12 +177,22 @@ fn wait_for_enter_key(flag: Arc<AtomicBool>) {
     });
 }
 
+async fn start_toptastic_server() -> std::io::Result<()> {
+    println!("Starting toptastic server...");
+
+    let toptastic = toptastic::TopTastic::new().await.unwrap();
+    toptastic.start_server().await
+    
+}
+
 async fn start_tube_monitor(receiver: mpsc::Receiver<Track>) -> JoinHandle<()> {
+    println!("Starting tube monitor...");
     tokio::spawn(async move {
         let mut tube = tube::Tube::new();
         for track in receiver {
             let tube_track = TubeTrack::from(track);
-            tube.process_track(&tube_track).await;
+            let (title, description) = Tube::generate_sonotube_title_and_description();
+            tube.process_track(&tube_track, &title, &description).await;
         }
     })
 }
@@ -187,6 +202,7 @@ async fn start_track_monitor(
     flag: Arc<AtomicBool>,
     config: Config,
 ) -> JoinHandle<()> {
+    println!("Starting track monitor...");
     tokio::spawn(async move {
         // find sonos devices on the network
         let devices = sonos::discover().await.unwrap();

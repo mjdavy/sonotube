@@ -13,17 +13,12 @@ const SEARCH_URI: &str = "https://www.googleapis.com/youtube/v3/search";
 const PLAYLIST_ITEMS_URI: &str = "https://www.googleapis.com/youtube/v3/playlistItems";
 pub const API_KEY_VAR: &str = "SONOTUBE_API_KEY";
 
+#[derive(Debug, Clone)]
 pub struct Tube {
     pub seen: HashSet<String>,
     token: Option<AccessToken>,
     client: Client,
     playlist_id: Option<String>,
-}
-
-pub struct TubeTrack {
-    pub id: String,
-    pub title: String,
-    pub artist: String,
 }
 
 impl Tube {
@@ -40,6 +35,13 @@ impl Tube {
         let mut token_cache = dirs::cache_dir().expect("The cache directory was not found.");
         token_cache.push(file_name);
         token_cache
+    }
+
+    pub fn generate_sonotube_title_and_description() -> (String, String) {
+        let now = chrono::Local::now().format("%a %b %e %Y %T").to_string();
+        let title = format!("sonotube - {}", now);
+        let description = format!("playlist created by sonotube on {}", now);
+        (title, description)
     }
 
     async fn authenticate(&mut self) {
@@ -77,12 +79,12 @@ impl Tube {
         }
     }
 
-    pub async fn process_track(&mut self, track: &TubeTrack) {
+    pub async fn process_track(&mut self, track: &TubeTrack, title: &str, description: &str) {
         
         if self.playlist_id.is_none() {
-            let now = chrono::Local::now().format("%a %b %e %Y %T").to_string();
-            let title = format!("sonotube - {}", now);
-            let description = format!("playlist created by sonotube on {}", now);
+            //let now = chrono::Local::now().format("%a %b %e %Y %T").to_string();
+            //let title = format!("sonotube - {}", now);
+            //let description = format!("playlist created by sonotube on {}", now);
             self.playlist_id = self.insert_playlist(&title, &description).await;
         }
 
@@ -233,7 +235,8 @@ async fn test_process_track() {
     };
 
     let mut tube = Tube::new();
-    tube.process_track(&track).await;
+    let (title, description) = Tube::generate_sonotube_title_and_description();
+    tube.process_track(&track, &title, &description).await;
 }
 
 #[tokio::test]

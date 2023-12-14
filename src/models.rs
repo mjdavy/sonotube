@@ -234,3 +234,10 @@ pub struct ErrorItem {
     message: String,
     reason: String,
 }
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TubeTrack {
+    pub id: String,
+    pub title: String,
+    pub artist: String,
+}
