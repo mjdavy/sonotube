@@ -1,7 +1,6 @@
 use crate::models::*;
 use dirs;
 use reqwest::Client;
-use sonos::{self, Track};
 use std::collections::HashSet;
 use std::env;
 use std::path::{Path, PathBuf};
@@ -21,6 +20,12 @@ pub struct Tube {
     playlist_id: Option<String>,
 }
 
+pub struct TubeTrack {
+    pub id: String,
+    pub title: String,
+    pub artist: String,
+}
+
 impl Tube {
     pub fn new() -> Tube {
         Tube {
@@ -32,7 +37,6 @@ impl Tube {
     }
 
     fn get_token_cache_path(&mut self, file_name: &str) -> PathBuf {
-       
         let mut token_cache = dirs::cache_dir().expect("The cache directory was not found.");
         token_cache.push(file_name);
         token_cache
@@ -73,7 +77,7 @@ impl Tube {
         }
     }
 
-    pub async fn process_track(&mut self, track: &Track) {
+    pub async fn process_track(&mut self, track: &TubeTrack) {
         
         if self.playlist_id.is_none() {
             let now = chrono::Local::now().format("%a %b %e %Y %T").to_string();
@@ -83,7 +87,7 @@ impl Tube {
         }
 
         eprintln!("Tube:: Received {} by {}", track.title, track.artist);
-        if self.seen.insert(track.uri.clone()) {
+        if self.seen.insert(track.id.clone()) {
             eprintln!("Tube::processing track {} by {}", track.title, track.artist);
             match self.find_video_id_for_track(track).await {
                 Some(video_id) => self.add_video_to_playlist(&self.playlist_id.clone().unwrap(), &video_id).await,
@@ -150,7 +154,7 @@ impl Tube {
         }
     }
 
-    async fn find_video_id_for_track(&mut self, track: &Track) -> Option<String> {
+    async fn find_video_id_for_track(&mut self, track: &TubeTrack) -> Option<String> {
         let search_request = SearchRequestBuilder {
             query: Some(format!("{} {}", track.title, track.artist)),
             channel_id: None,
@@ -222,16 +226,10 @@ impl Tube {
 
 #[tokio::test]
 async fn test_process_track() {
-    use std::time::Duration;
-
-    let track = Track {
+    let track = TubeTrack {
+        id: String::from("id"),
         title: String::from("title"),
         artist: String::from("artist"),
-        album: Some(String::from("album")),
-        queue_position: 1,
-        uri: String::from("uri"),
-        duration: Duration::from_secs(180),
-        running_time: Duration::from_secs(1),
     };
 
     let mut tube = Tube::new();
@@ -240,18 +238,11 @@ async fn test_process_track() {
 
 #[tokio::test]
 async fn test_find_video_id_for_track() {
-    use std::time::Duration;
-
-    let track = Track {
+    let track = TubeTrack {
+        id: String::from("id"),
         title: String::from("shape of you"),
         artist: String::from("ed shiran"),
-        album: None,
-        queue_position: 1,
-        uri: String::from("uri"),
-        duration: Duration::from_secs(0),
-        running_time: Duration::from_secs(0),
     };
-
     let mut tube = Tube::new();
     let res = tube.find_video_id_for_track(&track).await;
     println!("{:?}", res);
