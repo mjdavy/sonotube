@@ -38,10 +38,10 @@ impl Tube {
         token_cache
     }
 
-    pub fn generate_sonotube_title_and_description() -> (String, String) {
+    pub fn generate_sonotube_title_and_description(creator: &str) -> (String, String) {
         let now = chrono::Local::now().format("%a %b %e %Y %T").to_string();
-        let title = format!("sonotube - {}", now);
-        let description = format!("playlist created by sonotube on {}", now);
+        let title = format!("{creator} - {now}");
+        let description = format!("playlist created by {creator} on {now}");
         (title, description)
     }
 
@@ -236,7 +236,7 @@ async fn test_process_track() {
     };
 
     let mut tube = Tube::new();
-    let (title, description) = Tube::generate_sonotube_title_and_description();
+    let (title, description) = Tube::generate_sonotube_title_and_description("test");
     tube.process_track(&track, &title, &description).await;
 }
 

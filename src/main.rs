@@ -76,7 +76,7 @@ async fn start_tube_monitor(receiver: mpsc::Receiver<Track>) -> JoinHandle<()> {
         let mut tube = tube::Tube::new();
         for track in receiver {
             let tube_track = TubeTrack::from(track);
-            let (title, description) = Tube::generate_sonotube_title_and_description();
+            let (title, description) = Tube::generate_sonotube_title_and_description("sonotube");
             tube.process_track(&tube_track, &title, &description).await;
         }
     })
