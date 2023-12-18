@@ -1,5 +1,6 @@
 use crate::models::*;
 use dirs;
+use log::{error, trace, info, warn};
 use reqwest::Client;
 use std::collections::HashSet;
 use std::env;
@@ -73,7 +74,7 @@ impl Tube {
         self.token = match auth.token(scopes).await {
             Ok(token) => Some(token),
             Err(err) => {
-                eprintln!("Failed to obtain access token: {:?}", err);
+                error!("Failed to obtain access token: {:?}", err);
                 panic!("{:?}", err);
             }
         }
@@ -88,15 +89,15 @@ impl Tube {
             self.playlist_id = self.insert_playlist(&title, &description).await;
         }
 
-        eprintln!("Tube:: Received {} by {}", track.title, track.artist);
+        trace!("Tube:: Received {} by {}", track.title, track.artist);
         if self.seen.insert(track.id.clone()) {
-            eprintln!("Tube::processing track {} by {}", track.title, track.artist);
+            info!("Tube::processing track {} by {}", track.title, track.artist);
             match self.find_video_id_for_track(track).await {
                 Some(video_id) => self.add_video_to_playlist(&self.playlist_id.clone().unwrap(), &video_id).await,
-                None => eprintln!("Tube:: No video found for {} by {}", track.title, track.artist),
+                None => warn!("Tube:: No video found for {} by {}", track.title, track.artist),
             }
         } else {
-            eprintln!(
+            info!(
                 "Tube::ingoring track {} by {} - already processed",
                 track.title, track.artist
             );
@@ -132,7 +133,7 @@ impl Tube {
         let response = match result {
             Ok(res) => res,
             Err(err) => {
-                eprintln!("Error: failed to instert playlist. {:?}", err);
+                error!("Error: failed to instert playlist. {:?}", err);
                 return None;
             }
         };
@@ -141,17 +142,17 @@ impl Tube {
             let playlist_result: Result<PlaylistResponse, reqwest::Error> = response.json().await;
             match playlist_result {
                 Ok(playlist_result) => {
-                    println!("{:?}", playlist_result);
+                    info!("{:?}", playlist_result);
                     return Some(playlist_result.id);
                 }
                 Err(e) => {
-                    eprintln!("Error: failed to parse playlist response: {:?}", e);
+                    error!("Error: failed to parse playlist response: {:?}", e);
                     return None;
                 }
             }
         } else {
             let err: GoogleErrorResponse = response.json().await.unwrap();
-            eprintln!("{:?}", err);
+            error!("{:?}", err);
             return None;
         }
     }
@@ -165,7 +166,7 @@ impl Tube {
         let api_key: String = match env::var(API_KEY_VAR) {
             Ok(secret) => secret,
             Err(e) => {
-                println!("{API_KEY_VAR} {e}");
+                trace!("{API_KEY_VAR} {e}");
                 return None;
             }
         };
@@ -176,7 +177,7 @@ impl Tube {
         let response = match result {
             Ok(res) => res,
             Err(err) => {
-                eprintln!("Error: failed to get search results. {:?}", err);
+                error!("Error: failed to get search results. {:?}", err);
                 return None;
             }
         };
@@ -191,13 +192,13 @@ impl Tube {
                     return Some(video_id.into());
                 }
                 Err(e) => {
-                    eprintln!("Error: failed to parse search results: {:?}", e);
+                    error!("Error: failed to parse search results: {:?}", e);
                     None
                 }
             }
         } else {
             let err: GoogleErrorResponse = response.json().await.unwrap();
-            eprintln!("{:?}", err);
+            error!("{:?}", err);
             return None;
         }
     }
@@ -220,8 +221,8 @@ impl Tube {
             .await;
         match res {
             // todo - might want to extract the response here and return it
-            Ok(_) => println!("Added video successfully"),
-            Err(e) => println!("Error: {}", e),
+            Ok(_) => info!("Added video successfully"),
+            Err(e) => error!("Error: {}", e),
         }
     }
 }
@@ -248,7 +249,7 @@ async fn test_find_video_id_for_track() {
     };
     let mut tube = Tube::new();
     let res = tube.find_video_id_for_track(&track).await;
-    println!("{:?}", res);
+    info!("{:?}", res);
     assert!(res.is_some());
     assert_eq!(res.unwrap(), "JGwWNGJdvx8");
 }

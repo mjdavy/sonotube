@@ -5,7 +5,7 @@ use actix_web::{get, post, web, App, HttpResponse, HttpServer, Responder};
 use async_std::sync::Mutex;
 use serde::{Deserialize, Serialize};
 use actix_web::web::Data;
-use log::{info, trace, warn};
+use log::info;
 
 #[derive(Serialize, Deserialize)]
 pub struct Playlist {
@@ -31,7 +31,7 @@ impl TopTastic {
             self.tube.process_track(&track, &title, &description).await;
         }
     }
-
+    
     pub async fn start_server(self) -> std::io::Result<()> {
         let port = 3030;
         info!("Starting server on port {}", port);
