@@ -1,5 +1,4 @@
 use std::sync::Arc;
-
 use crate::{models::TubeTrack, tube::Tube};
 use actix_web::{get, post, web, App, HttpResponse, HttpServer, Responder};
 use async_std::sync::Mutex;
@@ -25,13 +24,22 @@ impl TopTastic {
         Ok(Self { tube })
     }
 
-    pub async fn create_playlist(&mut self, title: String, description: String, tracks: Vec<TubeTrack>) {
+    pub async fn create_playlist(&mut self, title: String, description: String, tracks: Vec<TubeTrack>) -> Vec<TubeTrack> {
         info!("Creating playlist {} with {} tracks", title, tracks.len());
+        let mut processed_tracks = Vec::new();
         for track in tracks {
-            self.tube.process_track(&track, &title, &description).await;
+            let video_id = self.tube.process_track(&track, &title, &description).await;
+            let processed_track = TubeTrack {
+                id: track.id,
+                title: track.title,
+                artist: track.artist,
+                video_id,
+            };
+            processed_tracks.push(processed_track);
         }
+        processed_tracks
     }
-    
+
     pub async fn start_server(self) -> std::io::Result<()> {
         let port = 3030;
         info!("Starting server on port {}", port);
@@ -68,8 +76,8 @@ async fn create_playlist(data: web::Data<Arc<Mutex<TopTastic>>>, playlist: web::
     let tracks = playlist.tracks.clone();
 
     let mut toptastic = data.lock().await;
-    toptastic.create_playlist(title, description, tracks).await;
-    HttpResponse::Created().body("Playlist created successfully")
+    let process_tracks = toptastic.create_playlist(title, description, tracks).await;
+    HttpResponse::Created().json(process_tracks)
 }
 
 #[cfg(test)]
@@ -97,11 +105,13 @@ mod tests {
                         id: "test1".into(),
                         title: "we are never getting back together".into(),
                         artist: "Taylor Swift".into(),
+                        video_id: None,
                     },
                     TubeTrack {
                         id: "test2".into(),
                         title: "Houdini".into(),
                         artist: "Dua Lipa".into(),
+                        video_id: None,
                     }
                 ],
             })

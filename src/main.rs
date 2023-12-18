@@ -23,6 +23,7 @@ impl From<Track> for TubeTrack {
             id: track.uri,
             title: track.title,
             artist: track.artist,
+            video_id: None,
         }
     }
 }

@@ -240,4 +240,5 @@ pub struct TubeTrack {
     pub id: String,
     pub title: String,
     pub artist: String,
+    pub video_id: Option<String>
 }

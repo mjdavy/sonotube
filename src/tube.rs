@@ -80,7 +80,7 @@ impl Tube {
         }
     }
 
-    pub async fn process_track(&mut self, track: &TubeTrack, title: &str, description: &str) {
+    pub async fn process_track(&mut self, track: &TubeTrack, title: &str, description: &str)-> Option<String> {
         
         if self.playlist_id.is_none() {
             //let now = chrono::Local::now().format("%a %b %e %Y %T").to_string();
@@ -92,15 +92,24 @@ impl Tube {
         trace!("Tube:: Received {} by {}", track.title, track.artist);
         if self.seen.insert(track.id.clone()) {
             info!("Tube::processing track {} by {}", track.title, track.artist);
+
             match self.find_video_id_for_track(track).await {
-                Some(video_id) => self.add_video_to_playlist(&self.playlist_id.clone().unwrap(), &video_id).await,
-                None => warn!("Tube:: No video found for {} by {}", track.title, track.artist),
+                Some(video_id) => {
+                   
+                    self.add_video_to_playlist(&self.playlist_id.clone().unwrap(), &video_id).await;
+                    Some(video_id)
+                },
+                None => {
+                    warn!("Tube:: No video found for {} by {}", track.title, track.artist);
+                    None
+                }
             }
         } else {
             info!(
                 "Tube::ingoring track {} by {} - already processed",
                 track.title, track.artist
             );
+            None
         }
     }
 
@@ -233,6 +242,7 @@ async fn test_process_track() {
         id: String::from("id"),
         title: String::from("title"),
         artist: String::from("artist"),
+        video_id: None,
     };
 
     let mut tube = Tube::new();
@@ -246,6 +256,7 @@ async fn test_find_video_id_for_track() {
         id: String::from("id"),
         title: String::from("shape of you"),
         artist: String::from("ed shiran"),
+        video_id: None,
     };
     let mut tube = Tube::new();
     let res = tube.find_video_id_for_track(&track).await;
