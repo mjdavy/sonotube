@@ -67,7 +67,6 @@ impl SonoTube {
         config: Config,
     ) -> JoinHandle<()> {
         info!("Starting track monitor...");
-        info!("Config: {:?}", config);
         tokio::spawn(async move {
             // find sonos devices on the network
             let devices = sonos::discover().await.unwrap();

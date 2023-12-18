@@ -18,17 +18,21 @@ impl Config {
     pub fn new() -> Self {
         let config = match Config::load(CONFIG) {
             Some(config) => {
+                info!("Loaded config: {:?}", &config);
                 if let Some(value) = &config.api_key {
                     std::env::set_var(tube::API_KEY_VAR, value)
                 }
                 config
             }
-            None => Config {
-                api_key: None,
-                create_sonotube_playlist: None,
-                send_previous_tracks: None,
-                create_toptastic_playlist: None,
-            },
+            None => {
+                info!("No config found. Using defaults");
+                Config {
+                    api_key: None,
+                    create_sonotube_playlist: None,
+                    send_previous_tracks: None,
+                    create_toptastic_playlist: None,
+                }
+            }
         };
         config
     }

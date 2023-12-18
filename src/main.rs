@@ -30,9 +30,9 @@ impl From<Track> for TubeTrack {
 #[tokio::main]
 async fn main() {
 
-    let config = Config::new();
     env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
-
+    let config = Config::new();
+   
     let (sender, receiver) = mpsc::channel::<Track>();
     let track_monitor_flag = Arc::new(AtomicBool::new(true));
 
