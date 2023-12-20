@@ -115,7 +115,7 @@ impl SonoTube {
                             };
 
                             // Add this track to the youtube playlist if config option is enabled
-                            if config.create_play_list() {
+                            if config.create_sonotube_play_list() {
                                 info!("sonotube: Adding {} by {} to playlist", title, artist);
                                 sender.send(ser_track.clone().track).unwrap();
                             }

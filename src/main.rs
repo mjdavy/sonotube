@@ -41,10 +41,10 @@ async fn main() {
     wait_for_enter_key(track_monitor_flag.clone());
 
     let track_monitor_handle =
-        SonoTube::start_sonos_track_monitor(sender, track_monitor_flag.clone(), config).await;
+        SonoTube::start_sonos_track_monitor(sender, track_monitor_flag.clone(), config.clone()).await;
     let tube_monitor_handle = start_tube_monitor(receiver).await;
     
-    start_toptastic_server().await.expect("toptastic server failed");
+    start_toptastic_server(&config).await.expect("toptastic server failed");
 
     track_monitor_handle.await.expect("track_monitor panicked");
     tube_monitor_handle.await.expect("tube_monitor panicked");
@@ -64,10 +64,10 @@ fn wait_for_enter_key(flag: Arc<AtomicBool>) {
     });
 }
 
-async fn start_toptastic_server() -> std::io::Result<()> {
+async fn start_toptastic_server(config: &Config) -> std::io::Result<()> {
     println!("Starting toptastic server...");
 
-    let toptastic = toptastic::TopTastic::new().await.unwrap();
+    let toptastic = toptastic::TopTastic::new(config).await.unwrap();
     toptastic.start_server().await
 }
 

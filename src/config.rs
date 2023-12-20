@@ -37,8 +37,15 @@ impl Config {
         config
     }
 
-    pub fn create_play_list(&self) -> bool {
+    pub fn create_sonotube_play_list(&self) -> bool {
         match self.create_sonotube_playlist {
+            Some(val) => val,
+            None => false,
+        }
+    }
+
+    pub fn create_toptastic_play_list(&self) -> bool {
+        match self.create_toptastic_playlist {
             Some(val) => val,
             None => false,
         }
