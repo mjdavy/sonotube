@@ -93,6 +93,13 @@ impl Tube {
         if self.seen.insert(track.id.clone()) {
             info!("Tube::processing track {} by {}", track.title, track.artist);
 
+            // if we already have a video id for this track, just add it to the playlist
+            if let Some(video_id) = &track.video_id {
+                self.add_video_to_playlist(&self.playlist_id.clone().unwrap(), video_id).await;
+                return Some(video_id.clone());
+            }
+            
+            // otherwise, find the video id and add it to the playlist
             match self.find_video_id_for_track(track).await {
                 Some(video_id) => {
                    
