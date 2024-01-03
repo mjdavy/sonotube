@@ -236,6 +236,7 @@ pub struct ErrorItem {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TubeTrack {
     pub id: String,
     pub title: String,
